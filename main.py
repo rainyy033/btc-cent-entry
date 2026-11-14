@@ -67,8 +67,10 @@ def forecast(prices):
 def main():
     indir = os.environ.get("MAKEFUN_INPUT_DIR", "/input")
     outdir = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
-    if len(sys.argv) == 3:
-        indir, outdir = sys.argv[1], sys.argv[2]
+    args = [a for a in sys.argv[1:] if a != "--quiet"]
+    quiet = "--quiet" in sys.argv[1:]
+    if len(args) == 2:
+        indir, outdir = args
     os.makedirs(outdir, exist_ok=True)
     for name in sorted(os.listdir(indir)):
         if not name.endswith(".in"):
@@ -81,9 +83,12 @@ def main():
             raise ValueError(f"{name} does not hold exactly one market")
         prices = markets[0].get("prices") if isinstance(markets[0], dict) else None
         price = forecast(prices)
+        if not quiet:
+            print(f"{cid}: {price:.5f}", file=sys.stderr)
         with open(os.path.join(outdir, f"{cid}.out"), "w") as f:
-            json.dump({"forecasts": [{"case": cid, "price": price}]}, f, separators=(",", ":"))
-            f.write("\n")
+            # The price is written as a JSON number with exactly 5 decimals,
+            # so a fixed-point value never becomes `1e-05` or drops a zero.
+            f.write(f'{{"forecasts":[{{"case":{json.dumps(cid)},"price":{price:.5f}}}]}}\n')
 
 
 if __name__ == "__main__":
