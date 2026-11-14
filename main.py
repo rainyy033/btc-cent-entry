@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """BTC 4h-ahead forecaster: shrunk 12h momentum drift over persistence.
 
-guess = last_close + 0.6 * ((last - close_720min_ago) / 720) * 240
+guess = last_close + 0.6 * ((last - close_window_ago) / window) * 240
 
-Fixed constants, fitted on no future data (chosen on the dev kit's
-pseudo-backtests only); deterministic; stdlib only.
+The momentum window is 720 one-minute closes (12h), falling back to the full
+series when fewer closes are available. Fixed constants, fitted on no future
+data (chosen on the dev kit's pseudo-backtests only); deterministic; stdlib
+only.
 """
 import json
 import math
@@ -23,24 +25,40 @@ def clamp(x):
     return float(f"{max(MIN_PRICE, min(MAX_PRICE, x)):.5f}")
 
 
+def momentum_window(n_prices):
+    """Trailing closes to measure momentum over, capped at WIN minutes.
+
+    Uses the full series when it is shorter than WIN, so a short warm-up
+    case still gets a real (if noisier) drift instead of a zero one.
+    """
+    return min(WIN, n_prices)
+
+
+def drift_per_minute(prices, window):
+    """Per-minute linear drift over the trailing `window` closes.
+
+    The spread `prices[-1] - prices[-window]` (the price move over the
+    window) is divided by `window` to yield the average one-minute change.
+    """
+    return (prices[-1] - prices[-window]) / window
+
+
 def forecast(prices):
     """One case's guess from its price series; raises when it cannot be made.
 
-    A missing/empty/non-finite series is raised rather than guessed: an
-    invalid case is scored as the checkpoint's own close (persistence), which
-    beats fabricating a price off no data.
+    guess = last_close + SHRINK * drift_per_minute * H, where the drift is
+    measured over the trailing momentum window (the full series when shorter
+    than WIN). A missing/empty/non-finite series is raised rather than
+    guessed: an invalid case is scored as the checkpoint's own close
+    (persistence), which beats fabricating a price off no data.
     """
     if not isinstance(prices, list) or not prices:
         raise ValueError("market has no prices")
     last = prices[-1]
     if isinstance(last, bool) or not isinstance(last, (int, float)) or not math.isfinite(last):
         raise ValueError("market's last price is not a finite number")
-    if len(prices) == 1:
-        guess = last
-    else:
-        w = min(WIN, len(prices))
-        drift = (last - prices[-w]) / w
-        guess = last + SHRINK * drift * H
+    window = momentum_window(len(prices))
+    guess = last + SHRINK * drift_per_minute(prices, window) * H
     if not math.isfinite(guess):
         raise ValueError("forecast is not finite")
     return clamp(guess)
